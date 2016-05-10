@@ -21,9 +21,9 @@ read            /acct                             [account id]          account 
 
 write           /fs                               [file system uuid]    fs uuid, account uuid
 write           /acct/[account id]                [file system uuid]    fs uuid, account uuid
-write           /fs/[file system uuid]            [account uuid]        attribute, name, fs uuid
-write           /fs/[file system uuid]            name                  attribute, name, fs uuid
-write           /fs/[file system uuid]            active                attribute, name, fs uuid
+write           /fs/[file system uuid]            [account uuid]        attribute, value, fs uuid
+write           /fs/[file system uuid]            name                  attribute, value, fs uuid
+write           /fs/[file system uuid]            active                attribute, value, fs uuid
 
 
 ================
@@ -87,3 +87,20 @@ VERIFY IP ADDRESS FOR FILE SYSTEM
 =================================
 
 read          /fs/[file system uuid]/addr         [ip address]          ip address, file system uuid
+
+
+
+
+
+
+/token a3da073b-3751-4fef-9787-ba56b47f46a8 {"token":"a3da073b-3751-4fef-9787-ba56b47f46a8","id":"e63d2b35-c4d9-44f8-ba39-540036e1416c"}
+
+/token 4ae917d6-6af9-4efa-996a-22e6bcdcdd7d {"token":"4ae917d6-6af9-4efa-996a-22e6bcdcdd7d","id":"776524a8-6680-4195-9737-08f38eb036c1"}
+
+/token 9ec4948a-745a-414d-94d4-b10c59591654 {"token":"9ec4948a-745a-414d-94d4-b10c59591654","id":"bb8f45ed-8de5-4f61-8568-333357d8aeb5"}
+
+/token 8b77dffe-094e-4364-846f-165cce3835bf {"token":"8b77dffe-094e-4364-846f-165cce3835bf","id":"9c600f96-0b4c-441a-88c8-98540e474f08"}
+
+/token 6a68cf51-2099-43db-abe8-d90e66e6e7c2 {"token":"6a68cf51-2099-43db-abe8-d90e66e6e7c2","id":"5e632e6a-b317-45b8-9878-b5e216b8361f"}
+
+/token 29e4f365-395f-4508-8860-959881aadcf2 {"token":"29e4f365-395f-4508-8860-959881aadcf2","id":"25e11a53-9331-4858-a221-5bcd1722b1dc"}

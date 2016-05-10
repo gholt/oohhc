@@ -14,7 +14,6 @@ service FileSystemAPI {
   rpc UpdateFS (UpdateFSRequest) returns (UpdateFSResponse) {}
   rpc GrantAddrFS (GrantAddrFSRequest) returns (GrantAddrFSResponse) {}
   rpc RevokeAddrFS (RevokeAddrFSRequest) returns (RevokeAddrFSResponse) {}
-  rpc LookupAddrFS (LookupAddrFSRequest) returns (LookupAddrFSResponse) {}
 }
 
 // ModFS ...
@@ -25,102 +24,79 @@ message ModFS {
 
 // Request to create a new filesystem
 message CreateFSRequest {
-  string  Acctnum         = 1;
+  string  Token           = 1;
   string  FSName          = 2;
-  string  Token           = 3;
-  string  IPAddress       = 4;
 }
 
 // Response from creating a new filesystem
 message CreateFSResponse {
-  string  Status         = 1;
-  string  Payload        = 2;
+  string  Data        = 1;
 }
 
 // Request a list of all file systems for a given account
 message ListFSRequest{
-  string  Acctnum         = 1;
-  string  Token           = 2;
+  string  Token           = 1;
 }
 
 // Response for displaying a list of all an accounts file systems.
 message ListFSResponse {
-  string  Status     = 1;
-  string  Payload    = 2;
+  string  Data    = 1;
 }
 
 // Request to show the specific details about a file system
 message ShowFSRequest{
-  string  Acctnum         = 1;
+  string  Token           = 1;
   string  FSid            = 2;
-  string  Token           = 3;
 }
 
 // Response for a specific file system for an account.
 message ShowFSResponse {
-  string  Status     = 1;
-  string  Payload    = 2;
+  string  Data    = 1;
 }
 
 // Request to delete a specific file system
 message DeleteFSRequest {
-  string  Acctnum         = 1;
-  string  FSid            = 2;
-  string  Token           = 3;
+  string  Token         = 1;
+  string  FSid          = 2;
 }
 
 // Response from deleting a file system
 message DeleteFSResponse {
-  string  Status          = 1;
-  string  Payload         = 2;
+  string  Data         = 1;
 }
 
 // Request to update a specific file system's information
 message UpdateFSRequest {
-  string  Acctnum         = 1;
+  string  Token           = 1;
   string  FSid            = 2;
-  string  Token           = 3;
   ModFS   Filesys         = 4;
 }
 
 // Response from an update operation
 message UpdateFSResponse {
-  string  Status        = 1;
-  string  Payload       = 2;
+  string  Data       = 1;
 }
 
 // Request grant an ip address access to a file system
 message GrantAddrFSRequest {
-  string  Acctnum    = 1;
+  string  Token      = 1;
   string  FSid       = 2;
-  string  Token      = 3;
-  string  Addr       = 4;
+  string  Addr       = 3;
 }
 
 // Response from granting ip address access to a file system
 message GrantAddrFSResponse {
-  string Status           = 1;
+  string  Data          = 1;
 }
 
 // Request revoke an ip address access to a file system
 message RevokeAddrFSRequest {
-  string Acctnum    = 1;
+  string Token      = 1;
   string FSid       = 2;
-  string Token      = 3;
-  string Addr       = 4;
+  string Addr       = 3;
 }
 
 // Response from revoking ip address access to a file system
 message RevokeAddrFSResponse {
-  string  Status     = 1;
-}
-
-// Request filesystem lookup
-message LookupAddrFSRequest {
-  string  FSid       = 1;
-  string  Addr       = 2;
-}
-
-message LookupAddrFSResponse {
-  string status      = 1;
+  string  Data     = 1;
 }
