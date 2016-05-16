@@ -194,6 +194,7 @@ func (s *FileSystemAPIServer) ShowFS(ctx context.Context, r *fb.ShowFSRequest) (
 	var fsRef FileSysRef
 	var addrData AddrRef
 	var fsAttrData FileSysAttr
+	var aList []string
 	fs.ID = r.FSid
 
 	// Read FileSysRef entry to determine if it exists
@@ -259,7 +260,7 @@ func (s *FileSystemAPIServer) ShowFS(ctx context.Context, r *fb.ShowFSRequest) (
 		log.Printf("%s SHOW FAILED %v\n", srcAddr, err)
 		return nil, errf(codes.Internal, "%v", err)
 	}
-	fs.Addr = alist
+	fs.Addr = aList
 
 	// Return File System
 	fsJSON, jerr := json.Marshal(&fs)
