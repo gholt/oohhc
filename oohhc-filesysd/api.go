@@ -216,25 +216,6 @@ func (s *FileSystemAPIServer) ShowFS(ctx context.Context, r *fb.ShowFSRequest) (
 	}
 	fs.AcctID = fsRef.AcctID
 
-	// Read list of granted ip addresses
-	// group-lookup printf("/fs/%s/addr", FSID)
-	pKey = fmt.Sprintf("/fs/%s/addr", fs.ID)
-	pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
-	items, err := s.gstore.ReadGroup(context.Background(), pKeyA, pKeyB)
-	if err != nil {
-		log.Printf("%s SHOW FAILED %v\n", srcAddr, err)
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	alist := make([]string, len(items))
-	for k, v := range items {
-		err = json.Unmarshal(v.Value, &addrData)
-		if err != nil {
-			return nil, errf(codes.Internal, "%v", err)
-		}
-		alist[k] = addrData.Addr
-	}
-	fs.Addr = alist
-
 	// Read the file system attributes
 	// group-lookup /fs			FSID
 	//		Iterate over all the atributes
@@ -256,6 +237,29 @@ func (s *FileSystemAPIServer) ShowFS(ctx context.Context, r *fb.ShowFSRequest) (
 		return nil, errf(codes.Internal, "%v", err)
 	}
 	fs.Name = fsAttrData.Value
+
+	// Read list of granted ip addresses
+	// group-lookup printf("/fs/%s/addr", FSID)
+	pKey = fmt.Sprintf("/fs/%s/addr", fs.ID)
+	pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
+	items, err := s.gstore.ReadGroup(context.Background(), pKeyA, pKeyB)
+	if !store.IsNotFound(err) {
+		// No addr granted
+		aList = make([]string, len(items))
+		for k, v := range items {
+			err = json.Unmarshal(v.Value, &addrData)
+			if err != nil {
+				log.Printf("%s LIST FAILED %v\n", srcAddr, err)
+				return nil, errf(codes.Internal, "%v", err)
+			}
+			aList[k] = addrData.Addr
+		}
+	}
+	if err != nil {
+		log.Printf("%s SHOW FAILED %v\n", srcAddr, err)
+		return nil, errf(codes.Internal, "%v", err)
+	}
+	fs.Addr = alist
 
 	// Return File System
 	fsJSON, jerr := json.Marshal(&fs)
@@ -310,25 +314,6 @@ func (s *FileSystemAPIServer) ListFS(ctx context.Context, r *fb.ListFSRequest) (
 		fsList[k].AcctID = acctID
 		fsList[k].ID = fsRef.FSID
 
-		// Get List of addrs
-		pKey = fmt.Sprintf("/fs/%s/addr", fsList[k].ID)
-		pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
-		items, err := s.gstore.ReadGroup(context.Background(), pKeyA, pKeyB)
-		if err != nil {
-			log.Printf("%s LIST FAILED %v\n", srcAddr, err)
-			return nil, errf(codes.Internal, "%v", err)
-		}
-		aList = make([]string, len(items))
-		for sk, sv := range items {
-			err = json.Unmarshal(sv.Value, &addrData)
-			if err != nil {
-				log.Printf("%s LIST FAILED %v\n", srcAddr, err)
-				return nil, errf(codes.Internal, "%v", err)
-			}
-			aList[sk] = addrData.Addr
-		}
-		fsList[k].Addr = aList
-
 		// Get File System Name
 		pKey = fmt.Sprintf("/fs/%s", fsList[k].ID)
 		pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
@@ -349,6 +334,27 @@ func (s *FileSystemAPIServer) ListFS(ctx context.Context, r *fb.ListFSRequest) (
 		}
 		fsList[k].Name = fsAttrData.Value
 
+		// Get List of addrs
+		pKey = fmt.Sprintf("/fs/%s/addr", fsList[k].ID)
+		pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
+		items, err := s.gstore.ReadGroup(context.Background(), pKeyA, pKeyB)
+		if !store.IsNotFound(err) {
+			// No addr granted
+			aList = make([]string, len(items))
+			for sk, sv := range items {
+				err = json.Unmarshal(sv.Value, &addrData)
+				if err != nil {
+					log.Printf("%s LIST FAILED %v\n", srcAddr, err)
+					return nil, errf(codes.Internal, "%v", err)
+				}
+				aList[sk] = addrData.Addr
+			}
+		}
+		if err != nil {
+			log.Printf("%s LIST FAILED %v\n", srcAddr, err)
+			return nil, errf(codes.Internal, "%v", err)
+		}
+		fsList[k].Addr = aList
 	}
 
 	// Return a File System List
