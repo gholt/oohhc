@@ -44,7 +44,7 @@ type AcctPayLoad struct {
 
 // TokenRef ...
 type TokenRef struct {
-	TokenID string `json:"tokenid"`
+	TokenID string `json:"token"`
 	AcctID  string `json:"acctid"`
 }
 
@@ -498,6 +498,9 @@ func (s *FileSystemAPIServer) validateToken(t string) (string, error) {
 	pKeyA, pKeyB := murmur3.Sum128([]byte("/token"))
 	cKeyA, cKeyB := murmur3.Sum128([]byte(t))
 	_, tDataByte, err = s.gstore.Read(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, nil)
+	if store.IsNotFound(err) {
+		return "", errors.New("Not Found")
+	}
 	err = json.Unmarshal(tDataByte, &tData)
 	if err != nil {
 		log.Printf("TOKEN FAILED %v\n", err)
