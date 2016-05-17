@@ -141,7 +141,7 @@ func (s *FileSystemAPIServer) CreateFS(ctx context.Context, r *fb.CreateFSReques
 	// write /acct/acctID				FSID						FileSysRef
 	pKey = fmt.Sprintf("/acct/%s", acctID)
 	pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
-	_, err = s.gstore.Write(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, timestampMicro, nil)
+	_, err = s.gstore.Write(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, timestampMicro, fsRefByte)
 	if err != nil {
 		log.Printf("%s CREATE FAILED %v\n", srcAddr, err)
 		return nil, errf(codes.Internal, "%v", err)
@@ -150,7 +150,7 @@ func (s *FileSystemAPIServer) CreateFS(ctx context.Context, r *fb.CreateFSReques
 	// write /fs/FSID						name						FileSysAttr
 	pKey = fmt.Sprintf("/fs/%s", fsID)
 	pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
-	cKeyA, cKeyB = murmur3.Sum128([]byte(r.FSName))
+	cKeyA, cKeyB = murmur3.Sum128([]byte("name"))
 	fsSysAttr.Attr = "name"
 	fsSysAttr.Value = r.FSName
 	fsSysAttr.FSID = fsID
