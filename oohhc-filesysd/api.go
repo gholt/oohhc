@@ -16,7 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
+	"reflect"
 	"time"
 
 	"github.com/gholt/brimtime"
@@ -32,7 +32,7 @@ import (
 
 var errf = grpc.Errorf
 
-// AcctPayLoad ... Account PayLoad
+// AcctPayLoad ...
 type AcctPayLoad struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -42,557 +42,499 @@ type AcctPayLoad struct {
 	DeleteDate int64  `json:"deletedate"`
 }
 
-// FileSysPayLoad ... File System PayLoad
-type FileSysPayLoad struct {
-	ID          string   `json:"id"`
-	AcctID      string   `json:"acctid"`
-	Name        string   `json:"name"`
-	SizeInBytes int64    `json:"sizeinbytes"`
-	Status      string   `json:"status"`
-	CreateDate  int64    `json:"createdate"`
-	DeleteDate  int64    `json:"deletedate"`
-	Addr        []string `json:"addrs"`
+// TokenRef ...
+type TokenRef struct {
+	TokenID string `json:"token"`
+	AcctID  string `json:"acctid"`
 }
 
-// AcctRefPayload ...
-type AcctRefPayload struct {
-	ID     string `json:"id"`
+// FileSysRef ...
+type FileSysRef struct {
+	FSID   string `json:"fsid"`
 	AcctID string `json:"acctid"`
 }
 
-// AddrPayLoad ... IP Address Address PayLoad
-type AddrPayLoad struct {
-	FSid string `json:"fsid"`
+// FileSysAttr ...
+type FileSysAttr struct {
+	Attr  string `json:"attr"`
+	Value string `json:"value"`
+	FSID  string `json:"fsid"`
+}
+
+// AddrRef ...
+type AddrRef struct {
 	Addr string `json:"addr"`
+	FSID string `json:"fsid"`
+}
+
+// FileSysMeta ...
+type FileSysMeta struct {
+	ID     string   `json:"id"`
+	AcctID string   `json:"acctid"`
+	Name   string   `json:"name"`
+	Status string   `json:"status"`
+	Addr   []string `json:"addrs"`
+}
+
+func clear(v interface{}) {
+	p := reflect.ValueOf(v).Elem()
+	p.Set(reflect.Zero(p.Type()))
 }
 
 // FileSystemAPIServer is used to implement oohhc
 type FileSystemAPIServer struct {
-	fsws *FileSystemWS
+	gstore store.GroupStore
 }
 
+// FSAttrList ...
+var FSAttrList = []string{"name"}
+
 // NewFileSystemAPIServer ...
-func NewFileSystemAPIServer(filesysWS *FileSystemWS) *FileSystemAPIServer {
+func NewFileSystemAPIServer(store store.GroupStore) *FileSystemAPIServer {
 	s := new(FileSystemAPIServer)
-	s.fsws = filesysWS
+	s.gstore = store
 	return s
 }
 
 // CreateFS ...
 func (s *FileSystemAPIServer) CreateFS(ctx context.Context, r *fb.CreateFSRequest) (*fb.CreateFSResponse, error) {
-	var status string
-	var result string
-	var acctData AcctPayLoad
-	var newFS FileSysPayLoad
-	var acctRef AcctRefPayload
-	var acctRefB []byte
 	var err error
-	var dataB []byte
-	// Get incomming ip
-	pr, ok := peer.FromContext(ctx)
-	if ok {
-		fmt.Println(pr.Addr)
-	}
-	// getAcct data
-	acctData, err = s.getAcct("/acct", r.Acctnum)
-	if err != nil {
-		log.Printf("Error %v on lookup for account %s", err, r.Acctnum)
-		return nil, err
-	}
-	// validate token
-	if acctData.Token != r.Token {
-		return nil, errf(codes.PermissionDenied, "%s", "Invalid Token")
-	}
-	// Check for to see if file system name exists
-	fs := fmt.Sprintf("/acct/%s/fs", acctData.ID)
-	err = s.dupNameCheck(fs, r.FSName)
-	if err != nil {
-		log.Printf("Precondition Failed: %v\n...", err)
-		return nil, errf(codes.FailedPrecondition, "%v", err)
-	}
-	// File system values
-	parentKey := fmt.Sprintf("/acct/%s/fs", r.Acctnum)
-	childKey := uuid.NewV4().String()
-	newFS.ID = childKey
-	newFS.AcctID = r.Acctnum
-	newFS.Name = r.FSName
-	newFS.SizeInBytes = 107374182400
-	newFS.Status = "active"
-	newFS.CreateDate = time.Now().Unix()
-	newFS.DeleteDate = 0
-	//write file system
-	dataB, err = json.Marshal(newFS)
-	if err != nil {
-		log.Printf("Marshal Error: %v\n...", err)
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	_, err = s.fsws.writeGStore(parentKey, childKey, dataB)
-	if err != nil {
-		log.Printf("Write Error: %v", err)
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	// Write special filesystem look up entry
-	// "/fs"	"[file system uuid]"		{"id": "[filesystem uuid]", "acctid": "[account uuid]"}
-	parentKeyA, parentKeyB := murmur3.Sum128([]byte("/fs"))
-	childKeyA, childKeyB := murmur3.Sum128([]byte(newFS.ID))
-	timestampMicro := brimtime.TimeToUnixMicro(time.Now())
-	acctRef.ID = newFS.ID
-	acctRef.AcctID = r.Acctnum
-	acctRefB, err = json.Marshal(acctRef)
-	if err != nil {
-		log.Printf("Marshal Error: %v\n...", err)
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	_, err = s.fsws.gstore.Write(context.Background(), parentKeyA, parentKeyB, childKeyA, childKeyB, timestampMicro, acctRefB)
-	if err != nil {
-		log.Printf("Write Error: %v", err)
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	// Prep reults to return
-	status = "OK"
-	result = fmt.Sprintf("File System %s was created from Account %s", childKey, r.Acctnum)
-	return &fb.CreateFSResponse{Payload: result, Status: status}, nil
-}
+	var acctID string
+	srcAddr := ""
+	var fsRef FileSysRef
+	var fsRefByte []byte
+	var fsSysAttr FileSysAttr
+	var fsSysAttrByte []byte
 
-// ListFS ...
-func (s *FileSystemAPIServer) ListFS(ctx context.Context, r *fb.ListFSRequest) (*fb.ListFSResponse, error) {
-	var status string
-	var acctData AcctPayLoad
-	var err error
-	var data string
 	// Get incomming ip
 	pr, ok := peer.FromContext(ctx)
 	if ok {
-		fmt.Println(pr.Addr)
+		srcAddr = pr.Addr.String()
 	}
-	// getAcct data
-	acctData, err = s.getAcct("/acct", r.Acctnum)
+
+	// Validate Token
+	acctID, err = s.validateToken(r.Token)
 	if err != nil {
-		log.Printf("Error %v on lookup for account %s", err, r.Acctnum)
-		return nil, err
+		log.Printf("%s CREATE FAILED %s\n", srcAddr, "PermissionDenied")
+		return nil, errf(codes.PermissionDenied, "%v", "Invalid Token")
 	}
-	// validate token
-	if acctData.Token != r.Token {
-		return nil, errf(codes.PermissionDenied, "%s", "Invalid Token")
-	}
-	// Setup Account read for list of file systems
-	parentKey := fmt.Sprintf("/acct/%s/fs", r.Acctnum)
-	data, err = s.fsws.readGroupGStore(parentKey)
+
+	fsID := uuid.NewV4().String()
+	timestampMicro := brimtime.TimeToUnixMicro(time.Now())
+	// Write file system reference entries.
+	// write /fs 								FSID						FileSysRef
+	pKey := "/fs"
+	pKeyA, pKeyB := murmur3.Sum128([]byte(pKey))
+	cKeyA, cKeyB := murmur3.Sum128([]byte(fsID))
+	fsRef.AcctID = acctID
+	fsRef.FSID = fsID
+	fsRefByte, err = json.Marshal(fsRef)
 	if err != nil {
+		log.Printf("%s  CREATE FAILED %v\n", srcAddr, err)
 		return nil, errf(codes.Internal, "%v", err)
 	}
-	// Prep things to return
-	status = "OK"
-	return &fb.ListFSResponse{Payload: data, Status: status}, nil
+	_, err = s.gstore.Write(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, timestampMicro, fsRefByte)
+	if err != nil {
+		log.Printf("%s CREATE FAILED %v\n", srcAddr, err)
+		return nil, errf(codes.Internal, "%v", err)
+	}
+	// write /acct/acctID				FSID						FileSysRef
+	pKey = fmt.Sprintf("/acct/%s", acctID)
+	pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
+	_, err = s.gstore.Write(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, timestampMicro, fsRefByte)
+	if err != nil {
+		log.Printf("%s CREATE FAILED %v\n", srcAddr, err)
+		return nil, errf(codes.Internal, "%v", err)
+	}
+	// Write file system attributes
+	// write /fs/FSID						name						FileSysAttr
+	pKey = fmt.Sprintf("/fs/%s", fsID)
+	pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
+	cKeyA, cKeyB = murmur3.Sum128([]byte("name"))
+	fsSysAttr.Attr = "name"
+	fsSysAttr.Value = r.FSName
+	fsSysAttr.FSID = fsID
+	fsSysAttrByte, err = json.Marshal(fsSysAttr)
+	if err != nil {
+		log.Printf("%s  CREATE FAILED %v\n", srcAddr, err)
+		return nil, errf(codes.Internal, "%v", err)
+	}
+	_, err = s.gstore.Write(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, timestampMicro, fsSysAttrByte)
+	if err != nil {
+		log.Printf("%s CREATE FAILED %v\n", srcAddr, err)
+		return nil, errf(codes.Internal, "%v", err)
+	}
+
+	// Return File System UUID
+	// Log Operation
+	log.Printf("%s CREATE SUCCESS %s\n", srcAddr, fsID)
+	return &fb.CreateFSResponse{Data: fsID}, nil
 }
 
 // ShowFS ...
 func (s *FileSystemAPIServer) ShowFS(ctx context.Context, r *fb.ShowFSRequest) (*fb.ShowFSResponse, error) {
-	var status string
-	var acctData AcctPayLoad
-	var fsData FileSysPayLoad
-	var fsDataB []byte
 	var err error
+	srcAddr := ""
+
 	// Get incomming ip
 	pr, ok := peer.FromContext(ctx)
 	if ok {
-		fmt.Println(pr.Addr)
-	}
-	// getAcct data
-	acctData, err = s.getAcct("/acct", r.Acctnum)
-	if err != nil {
-		log.Printf("Error %v on lookup for account %s", err, r.Acctnum)
-		return nil, err
-	}
-	// validate token
-	if acctData.Token != r.Token {
-		return nil, errf(codes.PermissionDenied, "%s", "Invalid Token")
+		srcAddr = pr.Addr.String()
 	}
 
-	pKey := fmt.Sprintf("/acct/%s/fs", r.Acctnum)
+	// Validate Token
+	_, err = s.validateToken(r.Token)
+	if err != nil {
+		log.Printf("%s SHOW FAILED %s\n", srcAddr, "PermissionDenied")
+		return nil, errf(codes.PermissionDenied, "%v", "Invalid Token")
+	}
+
+	var fs FileSysMeta
+	var value []byte
+	var fsRef FileSysRef
+	var addrData AddrRef
+	var fsAttrData FileSysAttr
+	var aList []string
+	fs.ID = r.FSid
+
+	// Read FileSysRef entry to determine if it exists
+	pKey := fmt.Sprintf("/fs")
 	pKeyA, pKeyB := murmur3.Sum128([]byte(pKey))
-	cKeyA, cKeyB := murmur3.Sum128([]byte(r.FSid))
-	_, fsDataB, err = s.fsws.gstore.Read(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, nil)
+	cKeyA, cKeyB := murmur3.Sum128([]byte(fs.ID))
+	_, value, err = s.gstore.Read(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, nil)
 	if store.IsNotFound(err) {
-		return nil, errf(codes.NotFound, "%v", "File System Not Found")
+		log.Printf("%s SHOW FAILED %s NOTFOUND", srcAddr, r.FSid)
+		return nil, errf(codes.NotFound, "%v", "Not Found")
 	}
 	if err != nil {
-		return nil, errf(codes.Internal, "%s", err)
+		log.Printf("%s SHOW FAILED %v\n", srcAddr, err)
+		return nil, errf(codes.Internal, "%v", err)
 	}
-	err = json.Unmarshal(fsDataB, &fsData)
+	err = json.Unmarshal(value, &fsRef)
 	if err != nil {
-		return nil, errf(codes.Internal, "%s", err)
+		log.Printf("%s SHOW FAILED %v\n", srcAddr, err)
+		return nil, errf(codes.Internal, "%v", err)
 	}
-	// Get list of Addr
-	fsData.Addr, err = s.addrList(fsData.ID)
-	if err != nil {
-		return nil, errf(codes.Internal, "%s", err)
+	fs.AcctID = fsRef.AcctID
+
+	// Read the file system attributes
+	// group-lookup /fs			FSID
+	//		Iterate over all the atributes
+	pKey = fmt.Sprintf("/fs/%s", fs.ID)
+	pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
+	cKeyA, cKeyB = murmur3.Sum128([]byte("name"))
+	_, value, err = s.gstore.Read(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, nil)
+	if store.IsNotFound(err) {
+		log.Printf("%s SHOW FAILED %s NAMENOTFOUND", srcAddr, r.FSid)
+		return nil, errf(codes.NotFound, "%v", "File System Name Not Found")
 	}
-	fsDataB, err = json.Marshal(&fsData)
 	if err != nil {
-		return nil, errf(codes.Internal, "%s", err)
+		log.Printf("%s SHOW FAILED %v\n", srcAddr, err)
+		return nil, errf(codes.Internal, "%v", err)
+	}
+	err = json.Unmarshal(value, &fsAttrData)
+	if err != nil {
+		log.Printf("%s SHOW FAILED %v\n", srcAddr, err)
+		return nil, errf(codes.Internal, "%v", err)
+	}
+	fs.Name = fsAttrData.Value
+
+	// Read list of granted ip addresses
+	// group-lookup printf("/fs/%s/addr", FSID)
+	pKey = fmt.Sprintf("/fs/%s/addr", fs.ID)
+	pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
+	items, err := s.gstore.ReadGroup(context.Background(), pKeyA, pKeyB)
+	if !store.IsNotFound(err) {
+		// No addr granted
+		aList = make([]string, len(items))
+		for k, v := range items {
+			err = json.Unmarshal(v.Value, &addrData)
+			if err != nil {
+				log.Printf("%s LIST FAILED %v\n", srcAddr, err)
+				return nil, errf(codes.Internal, "%v", err)
+			}
+			aList[k] = addrData.Addr
+		}
+	}
+	if err != nil {
+		log.Printf("%s SHOW FAILED %v\n", srcAddr, err)
+		return nil, errf(codes.Internal, "%v", err)
+	}
+	fs.Addr = aList
+
+	// Return File System
+	fsJSON, jerr := json.Marshal(&fs)
+	if jerr != nil {
+		return nil, errf(codes.Internal, "%s", jerr)
+	}
+	// Log Operation
+	log.Printf("%s SHOW SUCCESS %s\n", srcAddr, r.FSid)
+	return &fb.ShowFSResponse{Data: string(fsJSON)}, nil
+}
+
+// ListFS ...
+func (s *FileSystemAPIServer) ListFS(ctx context.Context, r *fb.ListFSRequest) (*fb.ListFSResponse, error) {
+	srcAddr := ""
+	// Get incomming ip
+	pr, ok := peer.FromContext(ctx)
+	if ok {
+		srcAddr = pr.Addr.String()
+	}
+	// Validate Token
+	acctID, err := s.validateToken(r.Token)
+	if err != nil {
+		log.Printf("%s LIST FAILED %s\n", srcAddr, "PermissionDenied")
+		return nil, errf(codes.PermissionDenied, "%v", "Invalid Token")
 	}
 
-	// Prep things to return
-	status = "OK"
-	return &fb.ShowFSResponse{Payload: string(fsDataB), Status: status}, nil
+	var value []byte
+	var fsRef FileSysRef
+	var addrData AddrRef
+	var fsAttrData FileSysAttr
+	var aList []string
+
+	// Read Group /acct/acctID				_						FileSysRef
+	pKey := fmt.Sprintf("/acct/%s", acctID)
+	pKeyA, pKeyB := murmur3.Sum128([]byte(pKey))
+	list, err := s.gstore.ReadGroup(context.Background(), pKeyA, pKeyB)
+	if err != nil {
+		log.Printf("%s LIST FAILED %v\n", srcAddr, err)
+		return nil, errf(codes.Internal, "%v", err)
+	}
+	fsList := make([]FileSysMeta, len(list))
+	for k, v := range list {
+		clear(&fsRef)
+		clear(&addrData)
+		clear(&fsAttrData)
+		clear(&aList)
+		err = json.Unmarshal(v.Value, &fsRef)
+		if err != nil {
+			log.Printf("%s LIST FAILED %v\n", srcAddr, err)
+			return nil, errf(codes.Internal, "%v", err)
+		}
+		fsList[k].AcctID = acctID
+		fsList[k].ID = fsRef.FSID
+
+		// Get File System Name
+		pKey = fmt.Sprintf("/fs/%s", fsList[k].ID)
+		pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
+		cKeyA, cKeyB := murmur3.Sum128([]byte("name"))
+		_, value, err = s.gstore.Read(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, nil)
+		if store.IsNotFound(err) {
+			log.Printf("%s LIST FAILED %s NAMENOTFOUND", srcAddr, fsList[k].ID)
+			return nil, errf(codes.NotFound, "%v", "File System Name Not Found")
+		}
+		if err != nil {
+			log.Printf("%s LIST FAILED %v\n", srcAddr, err)
+			return nil, errf(codes.Internal, "%v", err)
+		}
+		err = json.Unmarshal(value, &fsAttrData)
+		if err != nil {
+			log.Printf("%s LIST FAILED %v\n", srcAddr, err)
+			return nil, errf(codes.Internal, "%v", err)
+		}
+		fsList[k].Name = fsAttrData.Value
+
+		// Get List of addrs
+		pKey = fmt.Sprintf("/fs/%s/addr", fsList[k].ID)
+		pKeyA, pKeyB = murmur3.Sum128([]byte(pKey))
+		items, err := s.gstore.ReadGroup(context.Background(), pKeyA, pKeyB)
+		if !store.IsNotFound(err) {
+			// No addr granted
+			aList = make([]string, len(items))
+			for sk, sv := range items {
+				err = json.Unmarshal(sv.Value, &addrData)
+				if err != nil {
+					log.Printf("%s LIST FAILED %v\n", srcAddr, err)
+					return nil, errf(codes.Internal, "%v", err)
+				}
+				aList[sk] = addrData.Addr
+			}
+		}
+		if err != nil {
+			log.Printf("%s LIST FAILED %v\n", srcAddr, err)
+			return nil, errf(codes.Internal, "%v", err)
+		}
+		fsList[k].Addr = aList
+	}
+
+	// Return a File System List
+	fsListJSON, jerr := json.Marshal(&fsList)
+	if jerr != nil {
+		return nil, errf(codes.Internal, "%s", jerr)
+	}
+	// Log Operation
+	log.Printf("%s LIST SUCCESS %s\n", srcAddr, acctID)
+	return &fb.ListFSResponse{Data: string(fsListJSON)}, nil
 }
 
 // DeleteFS ...
 func (s *FileSystemAPIServer) DeleteFS(ctx context.Context, r *fb.DeleteFSRequest) (*fb.DeleteFSResponse, error) {
-	var status string
-	var result string
-	var dataS string
-	var dataB []byte
-	var acctData AcctPayLoad
-	var fsdata FileSysPayLoad
 	var err error
+	srcAddr := ""
 	// Get incomming ip
 	pr, ok := peer.FromContext(ctx)
 	if ok {
-		fmt.Println(pr.Addr)
+		srcAddr = pr.Addr.String()
 	}
-	// getAcct data
-	acctData, err = s.getAcct("/acct", r.Acctnum)
+
+	// validate Token
+	_, err = s.validateToken(r.Token)
 	if err != nil {
-		log.Printf("Error %v on lookup for account %s", err, r.Acctnum)
-		return nil, err
-	}
-	// validate token
-	if acctData.Token != r.Token {
-		return nil, errf(codes.PermissionDenied, "%s", "Invalid Token")
-	}
-	// Setup keys and get filesystem data
-	parentKey := fmt.Sprintf("/acct/%s/fs", r.Acctnum)
-	childKey := r.FSid
-	dataS, err = s.fsws.getGStore(parentKey, childKey)
-	if err != nil {
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	err = json.Unmarshal([]byte(dataS), &fsdata)
-	if err != nil {
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	// only active accounts can be marked as deleted
-	if fsdata.Status != "active" || fsdata.DeleteDate != 0 {
-		return nil, errf(codes.InvalidArgument, "%s", "Passing File System Status")
-	}
-	// send delete to the group store
-	fsdata.Status = "deleted"
-	fsdata.DeleteDate = time.Now().Unix()
-	dataB, err = json.Marshal(fsdata)
-	if err != nil {
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	// write updated information into the group store
-	_, err = s.fsws.writeGStore(parentKey, childKey, dataB)
-	if err != nil {
-		return nil, errf(codes.Internal, "%v", err)
+		log.Printf("%s DELETE FAILED %s\n", srcAddr, "PermissionDenied")
+		return nil, errf(codes.PermissionDenied, "%v", "Invalid Token")
 	}
 
 	// Prep things to return
-	status = "OK"
-	result = fmt.Sprintf("filesystem %s in account %s was deleted", r.FSid, r.Acctnum)
-	return &fb.DeleteFSResponse{Payload: result, Status: status}, nil
+	// Log Operation
+	log.Printf("%s DELETE NOTIMPLEMENTED %s\n", srcAddr, r.FSid)
+	return &fb.DeleteFSResponse{Data: "Delete Operation not supported at this time"}, nil
 }
 
 // UpdateFS ...
 func (s *FileSystemAPIServer) UpdateFS(ctx context.Context, r *fb.UpdateFSRequest) (*fb.UpdateFSResponse, error) {
-	var status string
-	var result string
-	var acctData AcctPayLoad
 	var err error
-	var dataB []byte
+	srcAddr := ""
 	// Get incomming ip
 	pr, ok := peer.FromContext(ctx)
 	if ok {
-		fmt.Println(pr.Addr)
-	}
-	// getAcct data
-	acctData, err = s.getAcct("/acct", r.Acctnum)
-	if err != nil {
-		log.Printf("Error %v on lookup for account %s", err, r.Acctnum)
-		return nil, err
-	}
-	// validate token
-	if acctData.Token != r.Token {
-		return nil, errf(codes.PermissionDenied, "%s", "Invalid Token")
-	}
-	// Setup keys to pull file system data
-	parentKey := fmt.Sprintf("/acct/%s/fs", r.Acctnum)
-	childKey := r.FSid
-
-	// try and get filesystem details form the group store
-	result, err = s.fsws.getGStore(parentKey, childKey)
-	if err != nil {
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	if result == "" {
-		return nil, errf(codes.NotFound, "%s", "Account Not Found")
-	}
-	var fsData FileSysPayLoad
-	err = json.Unmarshal([]byte(result), &fsData)
-	if err != nil {
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	// update account information
-	if r.Filesys.Name != "" && fsData.Status == "active" {
-		// Check for duplicate Name
-		err = s.dupNameCheck(r.Acctnum, r.Filesys.Name)
-		if err != nil {
-			return nil, errf(codes.FailedPrecondition, "%v", err)
-		}
-		fsData.Name = r.Filesys.Name
-	}
-	if r.Filesys.Status != "" {
-		if fsData.Status == "deleted" && r.Filesys.Status != "deleted" {
-			fsData.DeleteDate = 0
-		}
-		fsData.Status = r.Filesys.Status
-	}
-	// write new information to the group store
-	dataB, err = json.Marshal(fsData)
-	if err != nil {
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	// write information into the group store
-	_, err = s.fsws.writeGStore(parentKey, childKey, dataB)
-	if err != nil {
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	// Pull updated data
-	var uresult string
-	uresult, err = s.fsws.getGStore(parentKey, childKey)
-	if err != nil {
-		return nil, errf(codes.Internal, "%v", err)
-	}
-	if uresult == "" {
-		return nil, errf(codes.NotFound, "%s", "Update Not Found")
+		srcAddr = pr.Addr.String()
 	}
 
-	// DO stuff
-	status = "OK"
-	return &fb.UpdateFSResponse{Payload: uresult, Status: status}, nil
+	// validate Token
+	_, err = s.validateToken(r.Token)
+	if err != nil {
+		log.Printf("%s UPDATE FAILED %s\n", srcAddr, "PermissionDenied")
+		return nil, errf(codes.PermissionDenied, "%v", "Invalid Token")
+	}
+
+	// return message
+	// Log Operation
+	log.Printf("%s UPDATE NOTIMPLEMENTED %s\n", srcAddr, r.FSid)
+	return &fb.UpdateFSResponse{Data: "UPDATE operation is not supported in EA"}, nil
 }
 
 // GrantAddrFS ...
 func (s *FileSystemAPIServer) GrantAddrFS(ctx context.Context, r *fb.GrantAddrFSRequest) (*fb.GrantAddrFSResponse, error) {
-	var status string
 	var err error
-	var acctData AcctPayLoad
-	var fsData FileSysPayLoad
-	var addrData AddrPayLoad
-	var dataB []byte
+	var addrData AddrRef
+	var addrByte []byte
+	srcAddr := ""
+
 	// Get incomming ip
 	pr, ok := peer.FromContext(ctx)
 	if ok {
-		fmt.Println(pr.Addr)
-	}
-	// getAcct data
-	acctData, err = s.getAcct("/acct", r.Acctnum)
-	if err != nil {
-		log.Printf("Error %v on lookup for account %s", err, r.Acctnum)
-		return nil, err
+		srcAddr = pr.Addr.String()
 	}
 	// validate token
-	if acctData.Token != r.Token {
-		return nil, errf(codes.PermissionDenied, "%s", "Invalid Token")
-	}
-	// getFS data
-	fs := fmt.Sprintf("/acct/%s/fs", r.Acctnum)
-	fsData, err = s.getFS(fs, r.FSid)
+	_, err = s.validateToken(r.Token)
 	if err != nil {
-		log.Printf("Error %v on lookup for File system %s", err, r.Acctnum)
-		return nil, err
+		log.Printf("%s GRANT FAILED %s\n", srcAddr, "PermissionDenied")
+		return nil, errf(codes.PermissionDenied, "%v", "Invalid Token")
 	}
-	if fsData.Status == "active" {
-		log.Println("FileSystem is active")
-	}
-	// write out the ip address
-	parentKey := fmt.Sprintf("/fs/%s/addr", r.FSid)
-	childKey := r.Addr
 
-	parentKeyA, parentKeyB := murmur3.Sum128([]byte(parentKey))
-	childKeyA, childKeyB := murmur3.Sum128([]byte(childKey))
+	// GRANT an file system entry for the addr
+	// 		write /fs/FSID/addr			addr						AddrRef
+	pKey := fmt.Sprintf("/fs/%s/addr", r.FSid)
+	pKeyA, pKeyB := murmur3.Sum128([]byte(pKey))
+	cKeyA, cKeyB := murmur3.Sum128([]byte(r.Addr))
 	timestampMicro := brimtime.TimeToUnixMicro(time.Now())
 	addrData.Addr = r.Addr
-	dataB, err = json.Marshal(addrData)
+	addrData.FSID = r.FSid
+	addrByte, err = json.Marshal(addrData)
 	if err != nil {
-		log.Printf("Marshal Error: %v\n...", err)
+		log.Printf("%s GRANT FAILED %v\n", srcAddr, err)
 		return nil, errf(codes.Internal, "%v", err)
 	}
-	_, err = s.fsws.gstore.Write(context.Background(), parentKeyA, parentKeyB, childKeyA, childKeyB, timestampMicro, dataB)
+	_, err = s.gstore.Write(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, timestampMicro, addrByte)
 	if err != nil {
-		log.Printf("Write Error: %v", err)
+		log.Printf("%s GRANT FAILED %v\n", srcAddr, err)
 		return nil, errf(codes.Internal, "%v", err)
 	}
 
-	// DO stuff
-	status = fmt.Sprintf("addr %s for filesystem %s with account id %s was granted", r.Addr, r.FSid, r.Acctnum)
-	return &fb.GrantAddrFSResponse{Status: status}, nil
+	// return Addr was Granted
+	// Log Operation
+	log.Printf("%s GRANT SUCCESS %s %s\n", srcAddr, r.FSid, r.Addr)
+	return &fb.GrantAddrFSResponse{Data: r.FSid}, nil
 }
 
 // RevokeAddrFS ...
 func (s *FileSystemAPIServer) RevokeAddrFS(ctx context.Context, r *fb.RevokeAddrFSRequest) (*fb.RevokeAddrFSResponse, error) {
-	var status string
 	var err error
-	var acctData AcctPayLoad
+	srcAddr := ""
+
 	// Get incomming ip
 	pr, ok := peer.FromContext(ctx)
 	if ok {
-		fmt.Println(pr.Addr)
+		srcAddr = pr.Addr.String()
 	}
-	// getAcct data
-	acctData, err = s.getAcct("/acct", r.Acctnum)
+	// Validate Token
+	_, err = s.validateToken(r.Token)
 	if err != nil {
-		log.Printf("Error %v on lookup for account %s", err, r.Acctnum)
-		return nil, errf(codes.NotFound, "%v", err)
+		log.Printf("%s REVOKE FAILED %s\n", srcAddr, "PermissionDenied")
+		return nil, errf(codes.PermissionDenied, "%v", "Invalid Token")
 	}
-	// validate token
-	if acctData.Token != r.Token {
-		return nil, errf(codes.PermissionDenied, "%s", "Invalid Token")
-	}
-	parentKey := fmt.Sprintf("/fs/%s/addr", r.FSid)
-	childKey := r.Addr
 
-	parentKeyA, parentKeyB := murmur3.Sum128([]byte(parentKey))
-	childKeyA, childKeyB := murmur3.Sum128([]byte(childKey))
-	timestampMicro := brimtime.TimeToUnixMicro(time.Now())
-	// Delete addr
-	_, err = s.fsws.gstore.Delete(context.Background(), parentKeyA, parentKeyB, childKeyA, childKeyB, timestampMicro)
-	if store.IsNotFound(err) {
-		log.Printf("/fs/%s/addr/%s did not exist to delete", r.FSid, r.Addr)
-		return nil, errf(codes.NotFound, "%s", "Addr not found")
-	} else if err != nil {
-		return nil, errf(codes.Internal, "%s", err)
-	}
-	// DO stuff
-	status = fmt.Sprintf("addr %s for filesystem %s with account id %s was revoked", r.Addr, r.FSid, r.Acctnum)
-	return &fb.RevokeAddrFSResponse{Status: status}, nil
-}
-
-// getAcct ...
-func (s *FileSystemAPIServer) getAcct(k string, ck string) (AcctPayLoad, error) {
-	var a AcctPayLoad
-	var err error
-
-	data, err := s.fsws.getGStore(k, ck)
-	if err != nil {
-		return a, errf(codes.Internal, "%v", err)
-	}
-	if data == "" {
-		return a, errf(codes.NotFound, "%s", "Account Not Found")
-	}
-	log.Printf("Got back %s", data)
-	err = json.Unmarshal([]byte(data), &a)
-	if err != nil {
-		return a, errf(codes.Internal, "%v", err)
-	}
-	if a.Status != "active" {
-		return a, errf(codes.NotFound, "%s", "Account Not Active")
-	}
-	return a, nil
-}
-
-// LookupAddrFS ...
-func (s *FileSystemAPIServer) LookupAddrFS(ctx context.Context, r *fb.LookupAddrFSRequest) (*fb.LookupAddrFSResponse, error) {
-	var err error
-	var status string
-
-	// Check if IP is assigned to the file system
-	parentKey := fmt.Sprintf("/fs/%s/addr", r.FSid)
-	pKeyA, pKeyB := murmur3.Sum128([]byte(parentKey))
-	cKeyA, cKeyB := murmur3.Sum128([]byte(r.Addr))
-
-	_, _, err = s.fsws.gstore.Read(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, nil)
-	if store.IsNotFound(err) {
-		log.Printf("/fs/%s/addr/%s did not exist to delete", r.FSid, r.Addr)
-		return nil, errf(codes.NotFound, "%s", "Addr not found")
-	} else if err != nil {
-		return nil, errf(codes.Internal, "%s", err)
-	}
-	//
-	// Verify Account is activea
-	status = "OK"
-	return &fb.LookupAddrFSResponse{Status: status}, nil
-}
-
-// getAcct ...
-func (s *FileSystemAPIServer) getFS(k string, ck string) (FileSysPayLoad, error) {
-	var fs FileSysPayLoad
-	var err error
-
-	data, err := s.fsws.getGStore(k, ck)
-	if err != nil {
-		return fs, errf(codes.Internal, "%v", err)
-	}
-	if data == "" {
-		return fs, errf(codes.NotFound, "%s", "FileSystem Not Found")
-	}
-	log.Printf("Got back %s", data)
-	err = json.Unmarshal([]byte(data), &fs)
-	if err != nil {
-		return fs, errf(codes.Internal, "%v", err)
-	}
-	if fs.Status != "active" {
-		return fs, errf(codes.NotFound, "%s", "Account Not Active")
-	}
-	return fs, nil
-}
-
-// dupNameCheck ...
-func (s *FileSystemAPIServer) dupNameCheck(fs string, n string) error {
-	var fsdata FileSysPayLoad
-	// try and get file system details form the group store
-	data, err := s.fsws.readGroupGStore(fs)
-	log.Printf("Data from the list: %v", data)
-	if err != nil {
-		log.Printf("Problem talking to Group Store: %v", err)
-		return err
-	}
-	if data == "" {
-		return nil
-	}
-	fsList := strings.Split(data, "|")
-	log.Printf("Number of file systems in the list: %v", len(fsList))
-	log.Printf("File System: %v", fsList)
-	for i := 0; i < len(fsList); i++ {
-		if fsList[i] != "" {
-			err = json.Unmarshal([]byte(fsList[i]), &fsdata)
-			if err != nil {
-				log.Printf("Unmarshal Error: %v", err)
-				return err
-			}
-			if fsdata.Status == "active" {
-				if strings.ToLower(fsdata.Name) == strings.ToLower(n) {
-					log.Printf("FileSystem Name already exists: %s", n)
-					return errors.New("Name already exists")
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// addrList ...
-func (s *FileSystemAPIServer) addrList(fsid string) ([]string, error) {
-	var ap AddrPayLoad
-	pKey := fmt.Sprintf("/fs/%s/addr", fsid)
+	// REVOKE an file system entry for the addr
+	// 		delete /fs/FSID/addr			addr						AddrRef
+	pKey := fmt.Sprintf("/fs/%s/addr", r.FSid)
 	pKeyA, pKeyB := murmur3.Sum128([]byte(pKey))
-	items, err := s.fsws.gstore.ReadGroup(context.Background(), pKeyA, pKeyB)
+	cKeyA, cKeyB := murmur3.Sum128([]byte(r.Addr))
+	timestampMicro := brimtime.TimeToUnixMicro(time.Now())
+	_, err = s.gstore.Delete(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, timestampMicro)
 	if store.IsNotFound(err) {
-		return nil, nil
+		log.Printf("%s REVOKE FAILED %s %s\n", srcAddr, r.FSid, r.Addr)
+		return nil, errf(codes.NotFound, "%v", "Not Found")
 	}
+
+	// return Addr was revoked
+	// Log Operation
+	log.Printf("%s REVOKE SUCCESS %s %s\n", srcAddr, r.FSid, r.Addr)
+	return &fb.RevokeAddrFSResponse{Data: r.FSid}, nil
+}
+
+// validateToken ...
+func (s *FileSystemAPIServer) validateToken(t string) (string, error) {
+	var tData TokenRef
+	var aData AcctPayLoad
+	var tDataByte []byte
+	var aDataByte []byte
+	var err error
+
+	// Read Token
+	pKeyA, pKeyB := murmur3.Sum128([]byte("/token"))
+	cKeyA, cKeyB := murmur3.Sum128([]byte(t))
+	_, tDataByte, err = s.gstore.Read(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, nil)
+	if store.IsNotFound(err) {
+		return "", errors.New("Not Found")
+	}
+	err = json.Unmarshal(tDataByte, &tData)
 	if err != nil {
-		return nil, err
+		log.Printf("TOKEN FAILED %v\n", err)
+		return "", err
 	}
-	l := make([]string, len(items))
-	for k, v := range items {
-		err = json.Unmarshal(v.Value, &ap)
-		if err != nil {
-			return nil, err
-		}
-		l[k] = ap.Addr
+
+	// Read Account
+	pKeyA, pKeyB = murmur3.Sum128([]byte("/acct"))
+	cKeyA, cKeyB = murmur3.Sum128([]byte(tData.AcctID))
+	_, aDataByte, err = s.gstore.Read(context.Background(), pKeyA, pKeyB, cKeyA, cKeyB, nil)
+	if store.IsNotFound(err) {
+		return "", errors.New("Not Found")
 	}
-	return l, nil
+	err = json.Unmarshal(aDataByte, &aData)
+	if err != nil {
+		log.Printf("TOKEN FAILED %v\n", err)
+		return "", err
+	}
+
+	if tData.TokenID != aData.Token {
+		// Log Failed Operation
+		log.Printf("TOKEN FAIL %s\n", t)
+		return "", errors.New("Invalid Token")
+	}
+
+	// Return Account UUID
+	// Log Operation
+	log.Printf("TOKEN SUCCESS %s\n", tData.AcctID)
+	return tData.AcctID, nil
 }
