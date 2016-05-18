@@ -28,7 +28,7 @@ type acctStruct struct {
 // EA token structure
 type tokenStruct struct {
 	Token     string `json:"token"`
-	AccountID string `json:"accountid"`
+	AccountID string `json:"acctid"`
 }
 
 func main() {
