@@ -30,7 +30,7 @@ GLOBAL OPTIONS:
 
 ```
 acctdv2 -N dummy2
-write /token d5cabec1-009d-4560-8632-9b1bd842a9af {"token":"d5cabec1-009d-4560-8632-9b1bd842a9af","accountid":"b118469d-07b3-4c76-935c-ad9bae53e6e0"}
+write /token d5cabec1-009d-4560-8632-9b1bd842a9af {"token":"d5cabec1-009d-4560-8632-9b1bd842a9af","acctid":"b118469d-07b3-4c76-935c-ad9bae53e6e0"}
 
 write /acct b118469d-07b3-4c76-935c-ad9bae53e6e0 {"id":"b118469d-07b3-4c76-935c-ad9bae53e6e0","name":"dummy2","token":"d5cabec1-009d-4560-8632-9b1bd842a9af","status":"active","createdate":1462206025,"deletedate":0}
 ```
@@ -53,7 +53,7 @@ read-group /acct
 
 ```
 acctdv2 -N dummy2 -I b118469d-07b3-4c76-935c-ad9bae53e6e0
-write /token e9174c77-417f-4c08-9c96-989f1ba5309b {"token":"e9174c77-417f-4c08-9c96-989f1ba5309b","accountid":"11e4eb19-190e-4e4d-9726-b81ceed098a2"}
+write /token e9174c77-417f-4c08-9c96-989f1ba5309b {"token":"e9174c77-417f-4c08-9c96-989f1ba5309b","acctid":"11e4eb19-190e-4e4d-9726-b81ceed098a2"}
 
 write /acct 11e4eb19-190e-4e4d-9726-b81ceed098a2 {"id":"11e4eb19-190e-4e4d-9726-b81ceed098a2","name":"dummy2","token":"e9174c77-417f-4c08-9c96-989f1ba5309b","status":"active","createdate":1462218231,"deletedate":0}
 ```
