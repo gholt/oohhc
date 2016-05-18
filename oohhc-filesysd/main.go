@@ -70,9 +70,13 @@ func main() {
 		grpclog.Fatalln("Cannot start valuestore connector:", gerr)
 	}
 
+	fs, err := NewFileSystemWS(gstore)
+	if err != nil {
+		grpclog.Fatalln(err)
+	}
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.port))
 	FatalIf(err, "Failed to bind to port")
-	fb.RegisterFileSystemAPIServer(s, NewFileSystemAPIServer(gstore))
+	fb.RegisterFileSystemAPIServer(s, NewFileSystemAPIServer(fs))
 	grpclog.Printf("Starting up on %d...\n", cfg.port)
 	s.Serve(l)
 }
